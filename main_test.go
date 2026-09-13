@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -54,19 +53,14 @@ func TestCafeWhenOk(t *testing.T) {
 }
 
 func TestCafeCount(t *testing.T) {
-	// ШАГ 1: Сначала считаем, сколько всего кафе в Москве.
-	// Это нужно, чтобы правильно задать ожидание для count=100.
+
 	totalCafes := len(cafeList["moscow"])
 	limit := 100
-
-	// ШАГ 2: Вычисляем, сколько кафе мы ОЖИДАЕМ получить при count=100.
-	// Логика: минимум из (100 или всего кафе в городе).
 	wantFor100 := limit
 	if totalCafes < limit {
 		wantFor100 = totalCafes
 	}
 
-	// ШАГ 3: Создаем таблицу тестов ТОЛЬКО ОДИН РАЗ здесь, до цикла.
 	requests := []struct {
 		count int
 		want  int
@@ -74,32 +68,26 @@ func TestCafeCount(t *testing.T) {
 		{count: 0, want: 0},
 		{count: 1, want: 1},
 		{count: 2, want: 2},
-		// Используем переменную wantFor100, которую мы посчитали выше.
 		{count: 100, want: wantFor100},
 	}
 
-	// ШАГ 4: Цикл проходит по уже готовой таблице.
+	handler := http.HandlerFunc(mainHandle)
+
 	for _, v := range requests {
+
 		params := url.Values{}
 		params.Set("city", "moscow")
 		params.Set("count", strconv.Itoa(v.count))
-		urlStr := "http://localhost:8080/cafe?" + params.Encode()
 
-		resp, err := http.Get(urlStr)
-		if err != nil {
-			t.Errorf("Ошибка при выполнении запроса: %v", err)
-			continue
-		}
-		defer resp.Body.Close()
+		req := httptest.NewRequest("GET", "/cafe?"+params.Encode(), nil)
 
-		require.Equal(t, http.StatusOK, resp.StatusCode, "Сервер должен вернуть статус 200 OK")
+		recorder := httptest.NewRecorder()
 
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Errorf("Ошибка чтения тела ответа: %v", err)
-			continue
-		}
-		body := strings.TrimSpace(string(bodyBytes))
+		handler.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code, "Сервер должен вернуть статус 200 OK")
+
+		body := strings.TrimSpace(recorder.Body.String())
 
 		var cafes []string
 		if body == "" {
@@ -111,49 +99,37 @@ func TestCafeCount(t *testing.T) {
 		assert.Equal(t, v.want, len(cafes),
 			"Для count=%d ожидалось %d кафе, а получено %d",
 			v.count, v.want, len(cafes))
-
 	}
 }
 
 func TestCafeSearch(t *testing.T) {
-	// ШАГ 1: Подготовка тестовой таблицы
-	// Здесь мы задаем, что будем искать и сколько результатов ожидаем получить.
+
 	requests := []struct {
-		search    string // подстрока для поиска
-		wantCount int    // ожидаемое количество найденных кафе
+		search    string
+		wantCount int
 	}{
 		{search: "фасоль", wantCount: 0},
 		{search: "кофе", wantCount: 2},
 		{search: "вилка", wantCount: 1},
 	}
 
-	// ШАГ 2: Цикл по каждому варианту поиска
+	handler := http.HandlerFunc(mainHandle)
+
 	for _, v := range requests {
-		// Формируем параметры запроса
+
 		params := url.Values{}
 		params.Set("city", "moscow")
-		params.Set("search", v.search) // Передаем искомую подстроку
+		params.Set("search", v.search)
 
-		urlStr := "http://localhost:8080/cafe?" + params.Encode()
+		req := httptest.NewRequest("GET", "/cafe?"+params.Encode(), nil)
 
-		// Отправляем реальный HTTP-запрос
-		resp, err := http.Get(urlStr)
-		if err != nil {
-			t.Errorf("Ошибка при выполнении запроса: %v", err)
-			continue
-		}
-		defer resp.Body.Close()
+		recorder := httptest.NewRecorder()
 
-		// Проверяем, что сервер ответил успешно
-		require.Equal(t, http.StatusOK, resp.StatusCode, "Сервер должен вернуть статус 200 OK")
+		handler.ServeHTTP(recorder, req)
 
-		// Читаем и чистим тело ответа
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Errorf("Ошибка чтения тела ответа: %v", err)
-			continue
-		}
-		body := strings.TrimSpace(string(bodyBytes))
+		require.Equal(t, http.StatusOK, recorder.Code, "Сервер должен вернуть статус 200 OK")
+
+		body := strings.TrimSpace(recorder.Body.String())
 
 		var cafes []string
 		if body == "" {
@@ -162,21 +138,16 @@ func TestCafeSearch(t *testing.T) {
 			cafes = strings.Split(body, ",")
 		}
 
-		// Сначала проверяем, совпадает ли общее число найденных кафе с ожидаемым
+		// Проверяем количество найденных кафе
 		assert.Equal(t, v.wantCount, len(cafes),
 			"Для search='%s' ожидалось %d кафе, а получено %d",
 			v.search, v.wantCount, len(cafes))
 
-		// И помним про регистр: поиск без учета регистра.
-
+		// Дополнительная проверка: каждое найденное кафе действительно содержит подстроку
 		searchLower := strings.ToLower(v.search)
-
 		for i, cafeName := range cafes {
-			// Приводим название кафе к нижнему регистру для сравнения
 			cafeNameLower := strings.ToLower(cafeName)
-
 			ok := strings.Contains(cafeNameLower, searchLower)
-
 			assert.True(t, ok,
 				"Кафе №%d (%q) не содержит подстроку '%s'",
 				i+1, cafeName, v.search)
